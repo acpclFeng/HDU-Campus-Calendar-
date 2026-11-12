@@ -55,7 +55,7 @@ class EventCard extends StatelessWidget {
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Wrap(
-                    crossAxisAlignment: WrapCrossAlignment.baseline,
+                    crossAxisAlignment: WrapCrossAlignment.center,
                     spacing: 8,
                     runSpacing: 3,
                     children: [

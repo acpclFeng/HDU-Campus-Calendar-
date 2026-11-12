@@ -77,13 +77,15 @@ class CalendarService {
       });
 
   Future<_DaysResult> daysFor(String first, String last, {bool includePublic = false}) async {
-    final term = await term();
+    // 局部变量不能与同名实例方法 term()/exams() 重名，否则 Dart 会判定
+    // 「声明前引用」并把方法引用解析成局部变量（见 CI 编译报错）。
+    final termInfo = await term();
     final days = <String, List<CalEvent>>{};
 
-    _merge(days, classEvents(await scheduleRows(term), term));
+    _merge(days, classEvents(await scheduleRows(termInfo), termInfo));
     _merge(days, activityEvents(await activities(mine: !includePublic)));
-    final exams = await exams();
-    _merge(days, examEvents(exams.items));
+    final examResult = await exams();
+    _merge(days, examEvents(examResult.items));
 
     final sorted = <String, List<CalEvent>>{};
     final keys = days.keys.toList()..sort();
@@ -98,7 +100,7 @@ class CalendarService {
       });
       sorted[key] = list;
     }
-    return _DaysResult(term, sorted, exams.notices);
+    return _DaysResult(termInfo, sorted, examResult.notices);
   }
 
   Future<CalendarResult> range(String first, String last, {bool includePublic = false}) async {
