@@ -1,0 +1,18 @@
+这个文件夹 = 要上传到 GitHub 的仓库内容（APK 云端编译用）。
+
+【你要做的唯一一步】
+1. 打开 https://github.com/acpclFeng/HDU-Campus-Calendar-
+   （这是你账号下一个完全空的仓库；也可以去 github.com/new 新建一个空仓库）
+2. 仓库页点 Add file → Upload files
+3. 打开本文件夹，按 Ctrl + A 全选里面【所有内容】，一起拖进网页上传框
+   ★ .github 文件夹 和 .gitignore 是点号开头的，一定要一起选上，
+     少了 .github/workflows/build-apk.yml 就不会触发编译
+4. 点 Commit changes
+5. 等 8～15 分钟 → 仓库右侧 Releases 页 → 下载 app-release.apk
+   → 传到手机点开安装 → 首次粘贴一次杭电助手令牌即可
+
+【为什么不用装 Flutter】
+本机实测下载 Flutter SDK 只有 82 KB/s，光 1.1 GB 的 SDK 就要 3.7 小时，
+加上 Android SDK 与 Gradle 要 6～10 小时；云端编译 8～15 分钟全自动跑完。
+
+完整图文说明：..\\docs\\07-云端编译APK.md
