@@ -1,0 +1,56 @@
+name: 编译课程日历 APK
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+permissions:
+  contents: write
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+      - name: 生成安卓骨架
+        run: |
+          set -e
+          mkdir -p /tmp/ours
+          cp -a lib /tmp/ours/lib
+          cp pubspec.yaml /tmp/ours/pubspec.yaml
+          flutter create --platforms=android --org cn.hdu --project-name campus_calendar_android --android-language kotlin --no-pub .
+          rm -rf lib
+          cp -a /tmp/ours/lib lib
+          cp /tmp/ours/pubspec.yaml pubspec.yaml
+          cp native-config/AndroidManifest.xml android/app/src/main/AndroidManifest.xml
+          MAIN=$(find android/app/src/main -name 'MainActivity.*' | head -1 || true)
+          if [ -n "$MAIN" ]; then sed -i 's/FlutterActivity/FlutterFragmentActivity/g' "$MAIN"; fi
+      - run: "yes | flutter doctor --android-licenses || true"
+      - run: flutter pub get
+      - name: 检查与编译
+        run: |
+          mkdir -p ci-logs
+          flutter analyze 2>&1 | tee ci-logs/analyze.log || true
+          set -o pipefail
+          flutter build apk --release 2>&1 | tee ci-logs/build.log
+      - uses: softprops/action-gh-release@v2
+        with:
+          tag_name: apk-v${{ github.run_number }}
+          name: "课程日历 APK · 自动编译 #${{ github.run_number }}"
+          files: build/app/outputs/flutter-apk/app-release.apk
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: 失败时回传日志
+        if: failure()
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -f ci-logs/ || true
+          git commit -m "CI: 保存编译失败日志" || true
+          git push || true
