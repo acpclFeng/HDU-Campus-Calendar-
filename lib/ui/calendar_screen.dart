@@ -212,6 +212,7 @@ class _CalendarScreenState extends State<CalendarScreen> {
         child: SingleChildScrollView(
           physics: const AlwaysScrollableScrollPhysics(),
           child: Column(
+            mainAxisSize: MainAxisSize.min,
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
               if (_offline)
@@ -236,6 +237,7 @@ class _CalendarScreenState extends State<CalendarScreen> {
               Padding(
                 padding: const EdgeInsets.symmetric(horizontal: 14),
                 child: Column(
+                  mainAxisSize: MainAxisSize.min,
                   crossAxisAlignment: CrossAxisAlignment.stretch,
                   children: [
                     _buildSegmented(),
@@ -412,7 +414,6 @@ class _CalendarScreenState extends State<CalendarScreen> {
         child: WeekView(
           data: weekData,
           filters: _filters,
-          onPickDay: (_) {},
         ),
       );
     }
@@ -425,6 +426,7 @@ class _CalendarScreenState extends State<CalendarScreen> {
         if (v.abs() > 300) _shift(v > 0 ? -1 : 1);
       },
       child: Column(
+        mainAxisSize: MainAxisSize.min,
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
           MonthGrid(

@@ -48,6 +48,7 @@ class DayDetail extends StatelessWidget {
     return Padding(
       padding: const EdgeInsets.fromLTRB(2, 16, 2, 0),
       child: Column(
+        mainAxisSize: MainAxisSize.min,
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Text(

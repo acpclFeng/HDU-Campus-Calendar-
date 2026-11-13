@@ -1,4 +1,11 @@
 // 事件卡：时间 + 标题 + 标签 + 一行灰色详情（地点 / 教师 / 节次 / 学分 / 周次）。
+//
+// 布局注意：外层是 SingleChildScrollView → Column，纵向约束是「无限高」。
+// 这里绝不能用 Row(crossAxisAlignment: CrossAxisAlignment.stretch)：
+// 在无限高约束下 Flutter release 包会把卡片高度算成 infinity，
+// 于是排在它后面的筛选 chips / 页脚 / 后续事件全部被推到屏幕之外，
+// 表现就是「下半屏一片空白、按钮点了没反应」。
+// 现在用 Stack + Positioned：高度由内容撑开，左侧色条再按卡片高度拉伸。
 
 import 'dart:ui';
 
@@ -36,57 +43,59 @@ class EventCard extends StatelessWidget {
           ),
         ],
       ),
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
+      child: Stack(
         children: [
-          Container(
+          Positioned(
+            left: 0,
+            top: 10,
+            bottom: 10,
             width: 3,
-            margin: const EdgeInsets.symmetric(vertical: 10),
-            decoration: BoxDecoration(
-              color: AppColors.of(event.type),
-              borderRadius: const BorderRadius.horizontal(left: Radius.circular(3)),
+            child: DecoratedBox(
+              decoration: BoxDecoration(
+                color: AppColors.of(event.type),
+                borderRadius: const BorderRadius.horizontal(left: Radius.circular(3)),
+              ),
             ),
           ),
-          const SizedBox(width: 12),
-          Expanded(
-            child: Padding(
-              padding: const EdgeInsets.fromLTRB(0, 11, 12, 11),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Wrap(
-                    crossAxisAlignment: WrapCrossAlignment.center,
-                    spacing: 8,
-                    runSpacing: 3,
-                    children: [
-                      Text(
-                        event.start.isEmpty ? '全天' : '${event.start}–${event.end}',
-                        style: const TextStyle(fontSize: 12.5, fontFeatures: [FontFeature.tabularFigures()]),
-                      ),
-                      Text(event.title,
-                          style: const TextStyle(fontSize: 14.5, fontWeight: FontWeight.w600)),
-                      if (event.type != 'class')
-                        Container(
-                          padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 1),
-                          decoration: BoxDecoration(
-                            color: AppColors.of(event.type).withOpacity(0.13),
-                            borderRadius: BorderRadius.circular(6),
-                          ),
-                          child: Text(AppColors.label(event.type),
-                              style: TextStyle(fontSize: 10.5, color: AppColors.of(event.type))),
-                        ),
-                    ],
-                  ),
-                  if (meta.isNotEmpty) ...[
-                    const SizedBox(height: 4),
-                    Padding(
-                      padding: const EdgeInsets.only(left: 92),
-                      child: Text(meta.join(' ｜ '),
-                          style: TextStyle(fontSize: 12, height: 1.5, color: Colors.grey.shade600)),
+          Padding(
+            padding: const EdgeInsets.fromLTRB(16, 11, 12, 11),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Wrap(
+                  crossAxisAlignment: WrapCrossAlignment.center,
+                  spacing: 8,
+                  runSpacing: 3,
+                  children: [
+                    Text(
+                      event.start.isEmpty ? '全天' : '${event.start}–${event.end}',
+                      style: const TextStyle(
+                          fontSize: 12.5, fontFeatures: [FontFeature.tabularFigures()]),
                     ),
+                    Text(event.title,
+                        style: const TextStyle(fontSize: 14.5, fontWeight: FontWeight.w600)),
+                    if (event.type != 'class')
+                      Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 1),
+                        decoration: BoxDecoration(
+                          color: AppColors.of(event.type).withOpacity(0.13),
+                          borderRadius: BorderRadius.circular(6),
+                        ),
+                        child: Text(AppColors.label(event.type),
+                            style: TextStyle(fontSize: 10.5, color: AppColors.of(event.type))),
+                      ),
                   ],
+                ),
+                if (meta.isNotEmpty) ...[
+                  const SizedBox(height: 4),
+                  Padding(
+                    padding: const EdgeInsets.only(left: 92),
+                    child: Text(meta.join(' ｜ '),
+                        style: TextStyle(fontSize: 12, height: 1.5, color: Colors.grey.shade600)),
+                  ),
                 ],
-              ),
+              ],
             ),
           ),
         ],
