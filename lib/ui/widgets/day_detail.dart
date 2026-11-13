@@ -21,13 +21,25 @@ class DayDetail extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final d = parseIso(selected);
+    // 任何一处解析异常都不能让「日详情」整块变成空白（release 包会静默吞掉）
+    DateTime d;
+    try {
+      d = parseIso(selected);
+    } catch (_) {
+      d = DateTime.now();
+    }
     final names = ['周日', '周一', '周二', '周三', '周四', '周五', '周六'];
     var weekNo = 0;
-    if (term != null &&
-        selected.compareTo(term!.startDate) >= 0 &&
-        selected.compareTo(term!.endDate) <= 0) {
-      weekNo = term!.weekOf(selected);
+    try {
+      if (term != null &&
+          term!.startDate.isNotEmpty &&
+          term!.endDate.isNotEmpty &&
+          selected.compareTo(term!.startDate) >= 0 &&
+          selected.compareTo(term!.endDate) <= 0) {
+        weekNo = term!.weekOf(selected);
+      }
+    } catch (_) {
+      weekNo = 0;
     }
     final events = (days[selected] ?? [])
         .where((e) => filters.contains(e.type))

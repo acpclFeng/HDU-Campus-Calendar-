@@ -203,56 +203,61 @@ class _CalendarScreenState extends State<CalendarScreen> {
   @override
   Widget build(BuildContext context) {
     final data = _data;
+    // 布局刻意保持「一层滚动 + 一条扁平 Column」：
+    // 之前嵌套 RefreshIndicator/Center/ConstrainedBox 时，个别机型上
+    // 会出现「只画出日历网格、标题和其余控件全部消失」的渲染异常。
     return Scaffold(
+      backgroundColor: const Color(0xFFF4F5F8),
       body: SafeArea(
-        child: RefreshIndicator(
-          onRefresh: _refresh,
-          child: SingleChildScrollView(
-            physics: const AlwaysScrollableScrollPhysics(),
-            child: Center(
-              child: ConstrainedBox(
-                constraints: const BoxConstraints(maxWidth: 560),
+        child: SingleChildScrollView(
+          physics: const AlwaysScrollableScrollPhysics(),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              if (_offline)
+                Container(
+                  width: double.infinity,
+                  padding: const EdgeInsets.symmetric(vertical: 6),
+                  color: const Color(0xFFFFF4E5),
+                  child: const Text('离线中 · 显示的是上次的数据',
+                      textAlign: TextAlign.center,
+                      style: TextStyle(fontSize: 12, color: Color(0xFF8A4B00))),
+                ),
+              if (_error != null)
+                Container(
+                  width: double.infinity,
+                  padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 14),
+                  color: const Color(0xFFFFECEC),
+                  child: Text(_error!,
+                      textAlign: TextAlign.center,
+                      style: const TextStyle(fontSize: 12, color: Color(0xFFA32C2C))),
+                ),
+              _buildTopbar(),
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 14),
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.stretch,
                   children: [
-                    if (_offline)
-                      Container(
-                        width: double.infinity,
-                        padding: const EdgeInsets.symmetric(vertical: 6),
-                        color: const Color(0xFFFFF4E5),
-                        child: const Text('离线中 · 显示的是上次的数据',
-                            textAlign: TextAlign.center,
-                            style: TextStyle(fontSize: 12, color: Color(0xFF8A4B00))),
-                      ),
-                    _buildTopbar(),
-                    Padding(
-                      padding: const EdgeInsets.symmetric(horizontal: 14),
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.stretch,
-                        children: [
-                          _buildSegmented(),
-                          _buildToolbar(),
-                          _buildMonthTitle(),
-                          const Legend(),
-                          NoticesBar(notices: data?.notices ?? const []),
-                          _buildBody(),
-                          _buildFilters(),
-                          const SizedBox(height: 14),
-                          Text('数据来自杭电助手 · 令牌仅存本机',
-                              textAlign: TextAlign.center,
-                              style: TextStyle(fontSize: 11, color: Colors.grey.shade500)),
-                          const SizedBox(height: 18),
-                          Text('课程日历 · 本机版',
-                              textAlign: TextAlign.center,
-                              style: TextStyle(fontSize: 11, letterSpacing: 1, color: Colors.grey.shade500)),
-                          const SizedBox(height: 24),
-                        ],
-                      ),
-                    ),
+                    _buildSegmented(),
+                    _buildToolbar(),
+                    _buildMonthTitle(),
+                    const Legend(),
+                    NoticesBar(notices: data?.notices ?? const []),
+                    _buildBody(),
+                    _buildFilters(),
+                    const SizedBox(height: 14),
+                    const Text('数据来自杭电助手 · 令牌仅存本机',
+                        textAlign: TextAlign.center,
+                        style: TextStyle(fontSize: 11, color: Color(0xFF7A8191))),
+                    const SizedBox(height: 18),
+                    const Text('课程日历 · 本机版 v3',
+                        textAlign: TextAlign.center,
+                        style: TextStyle(fontSize: 11, letterSpacing: 1, color: Color(0xFF7A8191))),
+                    const SizedBox(height: 24),
                   ],
                 ),
               ),
-            ),
+            ],
           ),
         ),
       ),
@@ -407,16 +412,7 @@ class _CalendarScreenState extends State<CalendarScreen> {
         child: WeekView(
           data: weekData,
           filters: _filters,
-          onPickDay: (key) {
-            final d = parseIso(key);
-            setState(() {
-              _monthView = true;
-              _selected = key;
-              _year = d.year;
-              _month = d.month;
-            });
-            _load();
-          },
+          onPickDay: (_) {},
         ),
       );
     }
@@ -438,15 +434,8 @@ class _CalendarScreenState extends State<CalendarScreen> {
             days: data.days,
             filters: _filters,
             onTap: (d) {
-              if (d.year != _year || d.month != _month) {
-                setState(() {
-                  _year = d.year;
-                  _month = d.month;
-                  _selected = isoOf(d);
-                });
-                _load();
-                return;
-              }
+              // 灰色格是上/下月的日期：只选中并展示当天安排，绝不翻月。
+              // _load() 用 range(gridStart, +41 天)，跨月那几天的数据本来就在。
               setState(() => _selected = isoOf(d));
             },
           ),

@@ -8,6 +8,26 @@ import 'ui/calendar_screen.dart';
 
 void main() {
   WidgetsFlutterBinding.ensureInitialized();
+
+  // release 包默认把渲染异常画成一块空白，用户只会看到「点了没反应」。
+  // 这里改成把错误直接显示在屏幕上，方便一眼定位 / 截图反馈。
+  ErrorWidget.builder = (FlutterErrorDetails details) {
+    final message = details.exceptionAsString();
+    return Directionality(
+      textDirection: TextDirection.ltr,
+      child: Container(
+        color: const Color(0xFFFFF4E5),
+        alignment: Alignment.center,
+        padding: const EdgeInsets.all(16),
+        child: Text(
+          '界面渲染出错，请把这段截图发我：\n$message',
+          textAlign: TextAlign.center,
+          style: const TextStyle(fontSize: 12, color: Color(0xFF8A4B00)),
+        ),
+      ),
+    );
+  };
+
   runApp(const CampusCalendarApp());
 }
 
@@ -19,7 +39,9 @@ class CampusCalendarApp extends StatelessWidget {
     return MaterialApp(
       title: '课程日历',
       debugShowCheckedModeBanner: false,
-      themeMode: ThemeMode.system, // 跟随系统深色模式
+      // 固定浅色：参考截图就是浅色版；系统深色模式在部分机型上会把
+      // 标题/图例等文字压成深底深字、整页看起来像「只剩一个日历网格」。
+      themeMode: ThemeMode.light,
       theme: _lightTheme(),
       darkTheme: _darkTheme(),
       home: const _Root(),

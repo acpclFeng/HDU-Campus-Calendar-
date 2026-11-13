@@ -94,22 +94,26 @@ class MonthGrid extends StatelessWidget {
                     mainAxisAlignment: MainAxisAlignment.start,
                     children: [
                       const SizedBox(height: 8),
-                      Row(
-                        mainAxisSize: MainAxisSize.min,
-                        crossAxisAlignment: CrossAxisAlignment.baseline,
-                        textBaseline: TextBaseline.alphabetic,
-                        children: [
-                          Text('${d.day}',
-                              style: TextStyle(
-                                fontSize: 14,
-                                color: out
-                                    ? (dark ? const Color(0xFF565C6B) : const Color(0xFFC3C7D1))
-                                    : (dark ? const Color(0xFFDFE2EA) : const Color(0xFF2A2F3A)),
-                              )),
-                          if (isToday)
-                            Text(' 今天',
-                                style: TextStyle(fontSize: 9, color: AppColors.orange)),
-                        ],
+                      // 窄格子里「12 今天」会横向溢出到隔壁日期，用 FittedBox 收进去
+                      FittedBox(
+                        fit: BoxFit.scaleDown,
+                        child: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          crossAxisAlignment: CrossAxisAlignment.baseline,
+                          textBaseline: TextBaseline.alphabetic,
+                          children: [
+                            Text('${d.day}',
+                                style: TextStyle(
+                                  fontSize: 14,
+                                  color: out
+                                      ? (dark ? const Color(0xFF565C6B) : const Color(0xFFC3C7D1))
+                                      : (dark ? const Color(0xFFDFE2EA) : const Color(0xFF2A2F3A)),
+                                )),
+                            if (isToday)
+                              Text(' 今天',
+                                  style: TextStyle(fontSize: 9, color: AppColors.orange)),
+                          ],
+                        ),
                       ),
                       const SizedBox(height: 6),
                       DayDots(events: events),
