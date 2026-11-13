@@ -1,56 +1,137 @@
+# 把下面整段（含这一行注释也可以）粘贴到 GitHub 仓库 .github/workflows/build-apk.yml，替换原内容。
+# 注意：不要把这个 txt 文件上传，它是给人复制用的。
 name: 编译课程日历 APK
+
+# 推送代码就自动编译；也可以在 Actions 页面手动点「Run workflow」
 on:
   push:
     branches: [main]
   workflow_dispatch:
+
+# 允许流水线把编译好的 APK 发布成 Release，也允许失败时回写日志
 permissions:
   contents: write
+
 jobs:
   build:
+    name: 云端编译 release APK
     runs-on: ubuntu-latest
+    timeout-minutes: 40
+
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-java@v4
+      - name: 拉取源码
+        uses: actions/checkout@v4
+
+      # GitHub 的 Linux 运行器自带 Android SDK，这里补一个稳定的 JDK 17
+      - name: 准备 JDK 17
+        uses: actions/setup-java@v4
         with:
           distribution: temurin
           java-version: '17'
-      - uses: subosito/flutter-action@v2
+
+      - name: 安装 Flutter（stable）
+        uses: subosito/flutter-action@v2
         with:
           channel: stable
           cache: true
-      - name: 生成安卓骨架
+
+      - name: 生成与当前 Flutter 版本匹配的 Android 骨架
         run: |
           set -e
+          # 先把我们自己的 Dart 源码和配置备份出来
           mkdir -p /tmp/ours
           cp -a lib /tmp/ours/lib
           cp pubspec.yaml /tmp/ours/pubspec.yaml
-          flutter create --platforms=android --org cn.hdu --project-name campus_calendar_android --android-language kotlin --no-pub .
+
+          # 让 flutter create 按它自己的版本生成 gradle / MainActivity / 资源，
+          # 避免手写骨架与 Flutter 版本对不上导致编译失败
+          flutter create --platforms=android \
+            --org cn.hdu \
+            --project-name campus_calendar_android \
+            --android-language kotlin \
+            --no-pub .
+
+          # flutter create 可能写入示例 main.dart，把我们的源码恢复回去
           rm -rf lib
           cp -a /tmp/ours/lib lib
           cp /tmp/ours/pubspec.yaml pubspec.yaml
+
+          # release 包默认不带 INTERNET 权限，必须覆盖清单，否则 App 连不上校园接口
           cp native-config/AndroidManifest.xml android/app/src/main/AndroidManifest.xml
+
+          # flutter_secure_storage 在 Android 上需要 FragmentActivity 承载加密存储
           MAIN=$(find android/app/src/main -name 'MainActivity.*' | head -1 || true)
-          if [ -n "$MAIN" ]; then sed -i 's/FlutterActivity/FlutterFragmentActivity/g' "$MAIN"; fi
-      - run: "yes | flutter doctor --android-licenses || true"
-      - run: flutter pub get
-      - name: 检查与编译
+          if [ -n "$MAIN" ]; then
+            sed -i 's/FlutterActivity/FlutterFragmentActivity/g' "$MAIN"
+            echo "已调整 $MAIN → FlutterFragmentActivity"
+          fi
+
+      - name: 接受 Android 许可
+        run: yes | flutter doctor --android-licenses || true
+
+      - name: 安装依赖
+        run: flutter pub get
+
+      - name: 静态检查（不阻断打包，结果留档）
         run: |
           mkdir -p ci-logs
           flutter analyze 2>&1 | tee ci-logs/analyze.log || true
+
+      # 以前不加 --split-per-abi 会生成一个 47MB 的「胖包」：
+      # 里面同时塞了 arm64 / armv7 / x86_64 三份 Flutter 引擎和 Dart 代码，
+      # 但一台手机只会用其中一份。改成按 CPU 分包后单个 APK 约 16MB。
+      - name: 编译 release APK（按 CPU 分包）
+        run: |
           set -o pipefail
-          flutter build apk --release 2>&1 | tee ci-logs/build.log
-      - uses: softprops/action-gh-release@v2
+          mkdir -p ci-logs
+          flutter build apk --release --split-per-abi \
+            --target-platform android-arm64,android-arm 2>&1 | tee ci-logs/build.log
+          ls -lh build/app/outputs/flutter-apk/
+
+      - name: 确认产物
+        run: |
+          test -f build/app/outputs/flutter-apk/app-arm64-v8a-release.apk
+          test -f build/app/outputs/flutter-apk/app-armeabi-v7a-release.apk
+          echo "arm64: $(du -h build/app/outputs/flutter-apk/app-arm64-v8a-release.apk | cut -f1)"
+          echo "armv7: $(du -h build/app/outputs/flutter-apk/app-armeabi-v7a-release.apk | cut -f1)"
+
+      - name: 发布成 Release（APK 可直接下载）
+        uses: softprops/action-gh-release@v2
         with:
           tag_name: apk-v${{ github.run_number }}
           name: "课程日历 APK · 自动编译 #${{ github.run_number }}"
-          files: build/app/outputs/flutter-apk/app-release.apk
+          files: |
+            build/app/outputs/flutter-apk/app-arm64-v8a-release.apk
+            build/app/outputs/flutter-apk/app-armeabi-v7a-release.apk
+          body: |
+            由 GitHub Actions 自动编译的安卓安装包，按 CPU 分包，体积约为原来的 1/3。
+
+            **绝大多数手机下载 `app-arm64-v8a-release.apk`**；
+            只有很老的 32 位安卓机才需要 `app-armeabi-v7a-release.apk`。
+
+            下载后传到手机 → 点开安装（首次需允许「未知来源」）。
+            首次打开只需粘贴一次杭电助手令牌，之后打开直接用，没有 PIN、不用电脑。
+
+            本仓库只含代码，不含任何令牌或课表数据。
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-      - name: 失败时回传日志
+
+      # 编译失败时把日志写回仓库（用 GITHUB_TOKEN 推送不会再触发流水线），
+      # 这样即使没有本地 Flutter 环境，也能远程定位并修复 Dart / Gradle 报错。
+      - name: 失败时回传日志，便于排查
         if: failure()
         run: |
+          mkdir -p ci-logs
+          {
+            echo "# 编译日志（自动生成）"
+            echo
+            echo "- 时间：$(date -u '+%Y-%m-%d %H:%M:%S UTC')"
+            echo "- Flutter：$(flutter --version 2>/dev/null | head -1 || echo 未知)"
+            echo
+            echo "详见同目录的 analyze.log 与 build.log。"
+          } > ci-logs/README.md
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add -f ci-logs/ || true
-          git commit -m "CI: 保存编译失败日志" || true
-          git push || true
+          git commit -m "CI: 保存编译失败日志" || echo "日志无变更"
+          git push || echo "日志回传失败（不影响主流程）"
