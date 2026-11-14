@@ -30,6 +30,10 @@ class MonthGrid extends StatelessWidget {
   Widget build(BuildContext context) {
     final dark = Theme.of(context).brightness == Brightness.dark;
     final card = dark ? const Color(0xFF1D2029) : Colors.white;
+    // 每一格都要有看得见的灰色边框；跨月的灰色数字格额外加浅灰底。
+    // 之前普通格的边框是 Colors.transparent，手机上完全看不出「小方格」。
+    final cellLine = dark ? const Color(0xFF3D4452) : const Color(0xFFCFD5E2);
+    final cellOutBg = dark ? const Color(0xFF191C24) : const Color(0xFFF7F8FB);
     final start = gridStart(year, month);
     final today = todayIso();
 
@@ -79,14 +83,14 @@ class MonthGrid extends StatelessWidget {
                         ? (dark ? const Color(0xFF22304D) : const Color(0xFFEEF3FF))
                         : (isToday
                             ? (dark ? const Color(0xFF33291B) : const Color(0xFFFFF9F0))
-                            : Colors.transparent),
+                            : (out ? cellOutBg : Colors.transparent)),
                     border: Border.all(
                       width: 1.5,
                       color: isToday
                           ? AppColors.orange
                           : (isSelected
                               ? (dark ? const Color(0xFF5B8DEF) : AppColors.navy)
-                              : Colors.transparent),
+                              : cellLine),
                     ),
                     borderRadius: BorderRadius.circular(11),
                   ),

@@ -2,6 +2,8 @@
 // 布局按你给的截图 1:1 还原：标题 + 学期副标题 → 月历/周历 → ‹ 回到今天 ›
 // → 月份标题（深蓝下划线）→ 三色图例 → 42 格日历 → 当天详情 → 筛选 chips。
 
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import '../core/calendar_service.dart';
 import '../core/date_utils.dart';
@@ -9,6 +11,7 @@ import '../core/hdu_api.dart';
 import '../core/models.dart';
 import '../core/token_store.dart';
 import 'settings_sheet.dart';
+import 'widgets/activity_actions.dart';
 import 'widgets/common.dart';
 import 'widgets/day_detail.dart';
 import 'widgets/month_grid.dart';
@@ -32,6 +35,7 @@ class CalendarScreen extends StatefulWidget {
 
 class _CalendarScreenState extends State<CalendarScreen> {
   late CalendarService _service;
+  late final ActivityActions _actions;
   final _store = TokenStore();
 
   bool _monthView = true;
@@ -41,7 +45,8 @@ class _CalendarScreenState extends State<CalendarScreen> {
   CalendarResult? _data;
   CalendarResult? _weekData;
   final Set<String> _filters = {'class', 'activity', 'exam'};
-  bool _includePublic = false;
+  // 默认开：关掉就只看已报名的，连想报名的活动都看不到。
+  bool _includePublic = true;
   bool _loading = false;
   bool _offline = false;
   String? _error;
@@ -51,6 +56,7 @@ class _CalendarScreenState extends State<CalendarScreen> {
   void initState() {
     super.initState();
     _service = CalendarService(widget.token);
+    _actions = ActivityActions(_service.api);
     final now = DateTime.now();
     _year = now.year;
     _month = now.month;
@@ -143,6 +149,10 @@ class _CalendarScreenState extends State<CalendarScreen> {
         final next = DateTime(_year, _month + delta, 1);
         _year = next.year;
         _month = next.month;
+        // 与网页版 v8 一致：翻月后选中日落到该月 1 号，但绝不重置成「今天」
+        final mm = _month.toString().padLeft(2, '0');
+        final prefix = '$_year-$mm-';
+        if (!_selected.startsWith(prefix)) _selected = '${prefix}01';
       } else {
         _selected = addDays(_selected, delta * 7);
         final d = parseIso(_selected);
@@ -169,6 +179,28 @@ class _CalendarScreenState extends State<CalendarScreen> {
     _service.clearCache();
     await _load(week: !_monthView);
     _snack('已刷新');
+  }
+
+  // 二课报名 / 取消报名：写入成功后清缓存重载，让日历立刻反映新状态。
+  // 用 State.context 而不是卡片自己的 context：弹窗前有网络等待，State 的更稳。
+  Future<void> _handleAction(Future<ActionResult> pending) async {
+    final result = await pending;
+    if (!mounted || result.text.isEmpty) return;
+    _snack(result.text);
+    if (result.ok) {
+      _service.clearCache();
+      await _load(week: !_monthView);
+    }
+  }
+
+  void _onApply(BuildContext _, CalEvent event) {
+    if (!mounted) return;
+    unawaited(_handleAction(_actions.apply(context, event)));
+  }
+
+  void _onCancel(BuildContext _, CalEvent event) {
+    if (!mounted) return;
+    unawaited(_handleAction(_actions.cancel(context, event)));
   }
 
   void _openSettings() {
@@ -247,12 +279,13 @@ class _CalendarScreenState extends State<CalendarScreen> {
                     NoticesBar(notices: data?.notices ?? const []),
                     _buildBody(),
                     _buildFilters(),
+                    _buildFilterHint(),
                     const SizedBox(height: 14),
                     const Text('数据来自杭电助手 · 令牌仅存本机',
                         textAlign: TextAlign.center,
                         style: TextStyle(fontSize: 11, color: Color(0xFF7A8191))),
                     const SizedBox(height: 18),
-                    const Text('课程日历 · 本机版 v3',
+                    const Text('课程日历 · 本机版 v5',
                         textAlign: TextAlign.center,
                         style: TextStyle(fontSize: 11, letterSpacing: 1, color: Color(0xFF7A8191))),
                     const SizedBox(height: 24),
@@ -414,6 +447,9 @@ class _CalendarScreenState extends State<CalendarScreen> {
         child: WeekView(
           data: weekData,
           filters: _filters,
+          showActions: true,
+          onApply: _onApply,
+          onCancel: _onCancel,
         ),
       );
     }
@@ -446,11 +482,24 @@ class _CalendarScreenState extends State<CalendarScreen> {
             term: data.term,
             days: data.days,
             filters: _filters,
+            showActions: true,
+            onApply: _onApply,
+            onCancel: _onCancel,
           ),
         ],
       ),
     );
   }
+
+  Widget _buildFilterHint() => Padding(
+        padding: const EdgeInsets.fromLTRB(2, 9, 2, 0),
+        child: Text(
+          _includePublic
+              ? '二课范围：全校公开活动 + 我已报名的（自动去重）· 关掉后只看我已报名的'
+              : '二课范围：只看我已报名的 · 打开「全部二课」会叠加全校公开活动',
+          style: TextStyle(fontSize: 11, height: 1.5, color: Colors.grey.shade600),
+        ),
+      );
 
   Widget _buildFilters() => Padding(
         padding: const EdgeInsets.fromLTRB(2, 14, 2, 0),

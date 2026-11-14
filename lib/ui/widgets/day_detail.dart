@@ -10,6 +10,9 @@ class DayDetail extends StatelessWidget {
   final Term? term;
   final Map<String, List<CalEvent>> days;
   final Set<String> filters;
+  final bool showActions;
+  final EventAction? onApply;
+  final EventAction? onCancel;
 
   const DayDetail({
     super.key,
@@ -17,6 +20,9 @@ class DayDetail extends StatelessWidget {
     required this.term,
     required this.days,
     required this.filters,
+    this.showActions = false,
+    this.onApply,
+    this.onCancel,
   });
 
   @override
@@ -64,7 +70,13 @@ class DayDetail extends StatelessWidget {
                   style: TextStyle(fontSize: 13, color: Colors.grey.shade600)),
             )
           else
-            for (final e in events) EventCard(event: e),
+            for (final e in events)
+              EventCard(
+                event: e,
+                showActions: showActions,
+                onApply: onApply,
+                onCancel: onCancel,
+              ),
         ],
       ),
     );

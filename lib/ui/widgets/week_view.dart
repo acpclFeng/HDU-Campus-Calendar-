@@ -9,11 +9,17 @@ import 'event_card.dart';
 class WeekView extends StatelessWidget {
   final CalendarResult data;
   final Set<String> filters;
+  final bool showActions;
+  final EventAction? onApply;
+  final EventAction? onCancel;
 
   const WeekView({
     super.key,
     required this.data,
     required this.filters,
+    this.showActions = false,
+    this.onApply,
+    this.onCancel,
   });
 
   @override
@@ -75,7 +81,13 @@ class WeekView extends StatelessWidget {
                     )
                   else ...[
                     const SizedBox(height: 6),
-                    for (final e in events) EventCard(event: e),
+                    for (final e in events)
+                      EventCard(
+                        event: e,
+                        showActions: showActions,
+                        onApply: onApply,
+                        onCancel: onCancel,
+                      ),
                   ],
                 ],
               ),

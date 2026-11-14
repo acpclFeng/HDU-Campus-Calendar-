@@ -1,5 +1,6 @@
 // 杭电助手 OpenAPI 客户端：手机 App 直接 HTTPS 请求，不需要电脑、不需要后端。
-// 只调用 5 个只读接口。令牌放在 Authorization: Bearer 里，只发往 api.hduhelp.com。
+// 读取类 5 个接口；写入类只有「二课报名 / 取消报名」，必须经用户二次确认后才调用。
+// 令牌放在 Authorization: Bearer 里，只发往 api.hduhelp.com。
 //
 // 已实测该服务返回 Access-Control-Allow-Origin（反射来源）且放行 Authorization，
 // 所以浏览器 PWA 能直连；原生 App 更没有跨域限制。
@@ -36,7 +37,10 @@ class HduError implements Exception {
 class _Op {
   final String path;
   final List<String> params;
-  const _Op(this.path, this.params);
+  final String method;
+  final List<String> pathParams;
+  const _Op(this.path, this.params,
+      {this.method = 'GET', this.pathParams = const []});
 }
 
 const Map<String, _Op> _ops = {
@@ -49,6 +53,22 @@ const Map<String, _Op> _ops = {
       ['page', 'pageSize', 'status', 'content', 'hostName']),
   'my_exams':
       _Op('/hduhelp-neo/academic/exam', ['schoolYear', 'semester']),
+
+  // ---- 二课报名（写入类，调用前必须由用户在弹窗里明确确认） ----
+  'activity_status': _Op(
+      '/hduhelp-neo/campuslife/activities/{activityId}/registration', [],
+      pathParams: ['activityId']),
+  'activity_requirements': _Op(
+      '/hduhelp-neo/campuslife/activities/{activityId}/application-requirements',
+      [],
+      pathParams: ['activityId']),
+  'activity_apply': _Op(
+      '/hduhelp-neo/campuslife/activities/{activityId}/registration', [],
+      method: 'POST', pathParams: ['activityId']),
+  'activity_cancel': _Op(
+      '/hduhelp-neo/campuslife/activities/{activityId}/registration',
+      ['reason'],
+      method: 'DELETE', pathParams: ['activityId']),
 };
 
 class HduApi {
@@ -61,12 +81,22 @@ class HduApi {
   HduApi(this.token, {http.Client? client}) : _client = client ?? http.Client();
 
   Uri _uri(_Op op, Map<String, dynamic> params) {
+    // 活动编号在路径里，不在查询串里
+    var path = op.path;
+    for (final key in op.pathParams) {
+      final v = params[key];
+      if (v == null || v.toString().trim().isEmpty) {
+        throw HduError('protocol', '缺少活动编号，无法操作');
+      }
+      path = path.replaceAll('{$key}', Uri.encodeComponent(v.toString()));
+    }
     final query = <String, String>{};
     for (final key in op.params) {
       final v = params[key];
       if (v != null) query[key] = v.toString();
     }
-    return Uri.parse('$base${op.path}').replace(queryParameters: query.isEmpty ? null : query);
+    return Uri.parse('$base$path')
+        .replace(queryParameters: query.isEmpty ? null : query);
   }
 
   /// 统一拆掉 {code,msg,data} 信封，业务码非 0 抛错
@@ -85,21 +115,35 @@ class HduApi {
     return payload;
   }
 
-  Future<dynamic> call(String name, [Map<String, dynamic> params = const {}]) async {
+  /// method 不传就用接口定义的默认方法；写操作自动带幂等键，连点不会重复报名。
+  Future<dynamic> call(String name,
+      [Map<String, dynamic> params = const {}, String? method]) async {
     final op = _ops[name];
     if (op == null) throw HduError('protocol', '未知接口: $name');
     if (token.trim().isEmpty) throw HduError('auth', '令牌未配置');
+    final m = method ?? op.method;
+    final uri = _uri(op, params);
+    final headers = <String, String>{
+      'Authorization': 'Bearer ${token.trim()}',
+      'Accept': 'application/json',
+    };
+    if (m == 'POST' || m == 'DELETE') {
+      final key = params['idempotencyKey']?.toString();
+      headers['Idempotency-Key'] = (key == null || key.isEmpty)
+          ? 'cc-$name-${DateTime.now().millisecondsSinceEpoch ~/ 30000}'
+          : key;
+      headers['Content-Type'] = 'application/json';
+    }
 
     try {
-      final response = await _client
-          .get(
-            _uri(op, params),
-            headers: {
-              'Authorization': 'Bearer ${token.trim()}',
-              'Accept': 'application/json',
-            },
-          )
-          .timeout(timeout);
+      late http.Response response;
+      if (m == 'POST') {
+        response = await _client.post(uri, headers: headers).timeout(timeout);
+      } else if (m == 'DELETE') {
+        response = await _client.delete(uri, headers: headers).timeout(timeout);
+      } else {
+        response = await _client.get(uri, headers: headers).timeout(timeout);
+      }
 
       if (response.statusCode == 401 || response.statusCode == 403) {
         throw HduError('auth', 'HTTP ${response.statusCode}',

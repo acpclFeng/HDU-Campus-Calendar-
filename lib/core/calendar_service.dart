@@ -66,6 +66,57 @@ class CalendarService {
     });
   }
 
+  /// 「全部二课」开 = 「我的二课」∪ 全校公开活动，关 = 只看我的。
+  /// 用「活动编号」+「活动名|开始时间」双键去重；命中同一条时把后到的字段
+  /// 补进来（不覆盖已有非空值），既不重复显示，也不丢公开列表里的名额/状态。
+  /// 任一接口失败时退化为另一接口的结果，不让整个月历一起挂掉。
+  Future<List<Map<String, dynamic>>> _safeActivities(
+      {required bool mine}) async {
+    try {
+      return await activities(mine: mine);
+    } catch (_) {
+      return <Map<String, dynamic>>[];
+    }
+  }
+
+  Future<List<Map<String, dynamic>>> activityRows(
+      {bool includePublic = true}) async {
+    final mine = await _safeActivities(mine: true);
+    if (!includePublic) return mine;
+    final publicList = await _safeActivities(mine: false);
+    final list = <Map<String, dynamic>>[];
+    final index = <String, int>{};
+
+    void add(Map<String, dynamic> item) {
+      final keys = _activityKeys(item);
+      var at = -1;
+      for (final k in keys) {
+        final hit = index[k];
+        if (hit != null) {
+          at = hit;
+          break;
+        }
+      }
+      if (at >= 0) {
+        list[at] = _mergeActivity(list[at], item);
+      } else {
+        at = list.length;
+        list.add(item);
+      }
+      for (final k in keys) {
+        index[k] = at;
+      }
+    }
+
+    for (final item in mine) {
+      add(item);
+    }
+    for (final item in publicList) {
+      add(item);
+    }
+    return list;
+  }
+
   /// 考试接口常因教务处未开放返回业务码，转成一条提示而不是让整个日历报错
   Future<_ExamResult> exams() =>
       _memo('exams', const Duration(minutes: 30), () async {
@@ -83,7 +134,8 @@ class CalendarService {
     final days = <String, List<CalEvent>>{};
 
     _merge(days, classEvents(await scheduleRows(termInfo), termInfo));
-    _merge(days, activityEvents(await activities(mine: !includePublic)));
+    _merge(days,
+        activityEvents(await activityRows(includePublic: includePublic)));
     final examResult = await exams();
     _merge(days, examEvents(examResult.items));
 
@@ -162,6 +214,29 @@ class _ExamResult {
   final List<Map<String, dynamic>> items;
   final List<Notice> notices;
   const _ExamResult(this.items, this.notices);
+}
+
+List<String> _activityKeys(Map<String, dynamic> item) {
+  final id = (item['activityID'] ?? item['id'] ?? item['activityId'] ?? '')
+      .toString()
+      .trim();
+  final name = (item['activityName'] ?? item['name'] ?? '').toString().trim();
+  final start =
+      (item['activityStartTime'] ?? item['startTime'] ?? '').toString().trim();
+  final keys = <String>[];
+  if (id.isNotEmpty) keys.add('id:$id');
+  if (name.isNotEmpty && start.isNotEmpty) keys.add('ns:$name|$start');
+  return keys;
+}
+
+Map<String, dynamic> _mergeActivity(
+    Map<String, dynamic> base, Map<String, dynamic> extra) {
+  final out = Map<String, dynamic>.from(base);
+  extra.forEach((k, v) {
+    final cur = out[k];
+    if (cur == null || (cur is String && cur.isEmpty)) out[k] = v;
+  });
+  return out;
 }
 
 void _merge(Map<String, List<CalEvent>> target, Map<String, List<CalEvent>> extra) {
@@ -356,6 +431,10 @@ Map<String, List<CalEvent>> activityEvents(List<Map<String, dynamic>> list) {
         'hostName': hostName,
         'deadline': deadline,
         'activityID': activityId,
+        // 下面这些只用于报名确认弹窗展示，不参与日历计算
+        'activityStatusName': (item['activityStatusName'] ?? '').toString(),
+        'applyCount': item['applyCount'],
+        'totalCount': item['totalCount'],
       };
       if (totalDays > 1) extra['span'] = '第${offset + 1}/$totalDays天';
       days.putIfAbsent(day, () => <CalEvent>[]).add(CalEvent(

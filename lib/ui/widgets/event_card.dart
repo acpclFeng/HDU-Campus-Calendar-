@@ -20,9 +20,21 @@ String _shortTime(String value) {
   return hm != null ? '${hm.group(1)}:${hm.group(2)}' : value;
 }
 
+typedef EventAction = void Function(BuildContext context, CalEvent event);
+
 class EventCard extends StatelessWidget {
   final CalEvent event;
-  const EventCard({super.key, required this.event});
+  final bool showActions;
+  final EventAction? onApply;
+  final EventAction? onCancel;
+
+  const EventCard({
+    super.key,
+    required this.event,
+    this.showActions = false,
+    this.onApply,
+    this.onCancel,
+  });
 
   @override
   Widget build(BuildContext context) {
@@ -95,10 +107,73 @@ class EventCard extends StatelessWidget {
                         style: TextStyle(fontSize: 12, height: 1.5, color: Colors.grey.shade600)),
                   ),
                 ],
+                if (event.type == 'activity' && showActions) ...[
+                  const SizedBox(height: 9),
+                  _actionsRow(context),
+                ],
               ],
             ),
           ),
         ],
+      ),
+    );
+  }
+
+  // 用 Wrap 而不是 Row：窄屏放不下时自动换行，不会把「取消报名」挤出屏幕。
+  Widget _actionsRow(BuildContext context) {
+    final id = (event.extra['activityID'] ?? '').toString();
+    final enabled = id.isNotEmpty && onApply != null && onCancel != null;
+    return Wrap(
+      spacing: 8,
+      runSpacing: 6,
+      alignment: WrapAlignment.end,
+      crossAxisAlignment: WrapCrossAlignment.center,
+      children: [
+        Text(
+          enabled ? '点按钮可报名 / 取消报名' : '缺少活动编号',
+          style: TextStyle(fontSize: 11, color: Colors.grey.shade600),
+        ),
+        _actionButton(
+          label: '确认报名',
+          background: const Color(0xFF2F6FED),
+          foreground: Colors.white,
+          onTap: enabled ? () => onApply!(context, event) : null,
+        ),
+        _actionButton(
+          label: '取消报名',
+          background: const Color(0xFFFFF1F1),
+          foreground: const Color(0xFFC0393E),
+          border: true,
+          onTap: enabled ? () => onCancel!(context, event) : null,
+        ),
+      ],
+    );
+  }
+
+  Widget _actionButton({
+    required String label,
+    required Color background,
+    required Color foreground,
+    required VoidCallback? onTap,
+    bool border = false,
+  }) {
+    return GestureDetector(
+      onTap: onTap,
+      child: Container(
+        height: 34,
+        padding: const EdgeInsets.symmetric(horizontal: 14),
+        alignment: Alignment.center,
+        decoration: BoxDecoration(
+          color: onTap == null ? Colors.grey.shade300 : background,
+          borderRadius: BorderRadius.circular(9),
+          border: border ? Border.all(color: const Color(0xFFF0C7C7)) : null,
+        ),
+        child: Text(label,
+            style: TextStyle(
+              fontSize: 13,
+              fontWeight: FontWeight.w600,
+              color: onTap == null ? Colors.grey.shade600 : foreground,
+            )),
       ),
     );
   }
