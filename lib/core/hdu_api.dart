@@ -26,7 +26,8 @@ class HduError implements Exception {
       case 'business':
         return message.trim().isEmpty ? '校园服务暂时没有数据' : message.trim();
       default:
-        return message.trim().isEmpty ? '校园服务暂时不可用，稍后再试' : message.trim();
+        // 不再笼统说「上游服务暂不可用」：名额已满等业务失败以前会被误报成服务故障
+        return message.trim().isEmpty ? '学校服务暂时没有回应，稍后再试' : message.trim();
     }
   }
 
@@ -99,15 +100,58 @@ class HduApi {
         .replace(queryParameters: query.isEmpty ? null : query);
   }
 
+  /// 学校接口错误文案字段不统一，data 里还可能再套一层
+  static String _messageOf(dynamic payload) {
+    if (payload is! Map) {
+      return payload is String ? payload.trim() : '';
+    }
+    final m = Map<String, dynamic>.from(payload);
+    for (final key in [
+      'msg',
+      'message',
+      'error',
+      'reason',
+      'errorMessage',
+      'detail',
+      'description',
+    ]) {
+      final v = m[key];
+      if (v is String && v.trim().isNotEmpty) return v.trim();
+    }
+    if (m['data'] is Map) return _messageOf(m['data']);
+    return '';
+  }
+
+  /// HTTP 非 2xx 时把响应体里的真实原因带出来。
+  /// 旧版直接丢掉 body，只留 "HTTP 400"，最后被兜底成「上游服务暂不可用」，
+  /// 于是「名额已满」这类正常业务失败看起来像应用/服务坏了。
+  static String _bodyMessage(List<int> bytes) {
+    String text;
+    try {
+      text = utf8.decode(bytes).trim();
+    } catch (_) {
+      return '';
+    }
+    if (text.isEmpty) return '';
+    try {
+      final msg = _messageOf(jsonDecode(text));
+      if (msg.isNotEmpty) return msg;
+      return '';
+    } catch (_) {
+      if (text.length < 200 && !text.startsWith('<')) return text;
+      return '';
+    }
+  }
+
   /// 统一拆掉 {code,msg,data} 信封，业务码非 0 抛错
   dynamic _unwrap(dynamic payload) {
     if (payload is Map && payload.containsKey('code')) {
       final code = payload['code'];
       final bad = code != 0 && code != '0' && code != null;
       if (bad) {
-        final msg = (payload['msg'] ?? payload['message'] ?? '').toString();
         final kind = (code == 401 || code == 403) ? 'auth' : 'business';
-        throw HduError(kind, msg, status: code is int ? code : null);
+        throw HduError(kind, _messageOf(payload),
+            status: code is int ? code : null);
       }
       return payload['data'];
     }
@@ -150,8 +194,12 @@ class HduApi {
             status: response.statusCode);
       }
       if (response.statusCode < 200 || response.statusCode >= 300) {
-        throw HduError('http', 'HTTP ${response.statusCode}',
-            status: response.statusCode);
+        final detail = _bodyMessage(response.bodyBytes);
+        throw HduError(
+          detail.isEmpty ? 'http' : 'business',
+          detail.isEmpty ? 'HTTP ${response.statusCode}' : detail,
+          status: response.statusCode,
+        );
       }
       final dynamic payload = jsonDecode(utf8.decode(response.bodyBytes));
       return _unwrap(payload);

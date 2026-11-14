@@ -1,4 +1,6 @@
-// 二课「确认报名 / 取消报名」：先查状态与报名要求 → 弹二次确认 → 才真实写入学校系统。
+// 二课「确认报名 / 取消报名」：按报名状态决定能不能点 → 查状态与要求 →
+// 弹二次确认 → 才真实写入学校系统。失败原因统一交给 action_feedback.dart 分类。
+//
 // 官方 OpenAPI 对写接口有硬性要求：报名前查状态、查要求、展示活动信息、取得明确确认；
 // 取消前先查「我的二课」拿真实编号。所有写操作绝不静默提交。
 //
@@ -6,13 +8,25 @@
 // 绝不使用 Row(crossAxisAlignment: stretch)（在无限高约束下会把卡片撑成 infinity）。
 
 import 'package:flutter/material.dart';
+import '../../core/action_feedback.dart';
 import '../../core/hdu_api.dart';
 import '../../core/models.dart';
 
 class ActionResult {
   final bool ok;
   final String text;
-  const ActionResult(this.ok, this.text);
+  final ActionCategory category;
+  final bool? registrationHint;
+
+  const ActionResult(this.ok, this.text,
+      {this.category = ActionCategory.unknown, this.registrationHint});
+
+  factory ActionResult.from(ActionFeedback fb) => ActionResult(
+        fb.ok,
+        fb.text,
+        category: fb.category,
+        registrationHint: fb.registrationHint,
+      );
 }
 
 class ActivityActions {
@@ -29,6 +43,43 @@ class ActivityActions {
     }
     final hm = RegExp(r'(\d{1,2}):(\d{2})').firstMatch(value);
     return hm != null ? '${hm.group(1)}:${hm.group(2)}' : value;
+  }
+
+  String _quota(CalEvent event) {
+    final a = event.extra['applyCount'];
+    final t = event.extra['totalCount'];
+    if (a == null || t == null) return '';
+    return '$a / $t';
+  }
+
+  String _deadline(CalEvent event) =>
+      _shortTime(_s(event.extra['deadline']));
+
+  /// 把所有失败（异常 / 业务码 / data.success=false）都过一遍分类器
+  ActionResult _failure(Object e, bool applying, CalEvent event) {
+    final raw = e is HduError ? e.message : e.toString();
+    final kind = e is HduError ? e.kind : 'unknown';
+    final status = e is HduError ? e.status : null;
+    final fb = classifyActionFailure(
+      applying: applying,
+      raw: raw,
+      quota: _quota(event),
+      deadline: _deadline(event),
+      status: status,
+      kind: kind,
+    );
+    return ActionResult.from(fb);
+  }
+
+  ActionResult _stateHint(bool applying, bool registered) {
+    final fb = classifyActionFailure(
+      applying: applying,
+      raw: registered ? '已经报名' : '未报名',
+      quota: '',
+      deadline: '',
+      kind: 'business',
+    );
+    return ActionResult.from(fb);
   }
 
   List<MapEntry<String, String>> _lines(CalEvent event) {
@@ -52,6 +103,9 @@ class ActivityActions {
       final applied = _s(e['applyCount']);
       final total = _s(e['totalCount']);
       out.add(MapEntry('已报/名额', '$applied / $total'));
+    }
+    if (e['registered'] is bool) {
+      out.add(MapEntry('我的报名', e['registered'] == true ? '已报名' : '尚未报名'));
     }
     final id = _s(e['activityID']);
     out.add(MapEntry('活动编号', id.isEmpty ? '—' : id));
@@ -128,39 +182,53 @@ class ActivityActions {
     return ok == true;
   }
 
-  /// 写入接口用 submitted/verified/success/registered 区分「已提交」和「真的成功」
-  ActionResult _explain(dynamic d, String verb) {
+  /// 写入接口用 submitted/verified/success/registered 区分「已提交」和「真的成功」；
+  /// 失败时把上游文案交给分类器，避免「名额已满」被说成「服务暂不可用」。
+  ActionResult _explain(dynamic d, bool applying, CalEvent event) {
     final m = d is Map ? Map<String, dynamic>.from(d) : <String, dynamic>{};
     final submitted = m['submitted'] == true;
     final verified = m['verified'] == true;
     final success = m['success'] == true;
     final hasReg = m.containsKey('registered');
     final registered = m['registered'] == true;
-    final want = verb == '报名';
-    var ok = success || (verified && (!hasReg || registered == want));
-    if (success && hasReg && registered != want) ok = false;
-    final msg = _s(m['message']).trim();
-    final tail = msg.isEmpty
-        ? (ok ? '，日历已刷新' : '，请到杭电助手里再确认一下')
-        : '：$msg';
-    final text = ok
-        ? '$verb成功$tail'
-        : (submitted && !verified)
-            ? '$verb已提交，学校系统暂未确认，稍后点刷新看看'
-            : '$verb未完成$tail';
-    return ActionResult(ok, text);
+    final verb = applying ? '报名' : '取消报名';
+    var ok = success || (verified && (!hasReg || registered == applying));
+    if (success && hasReg && registered != applying) ok = false;
+    if (ok) return ActionResult.from(ActionFeedback.success(verb));
+
+    final raw = feedbackRaw(m);
+    if (raw.isEmpty) {
+      return ActionResult.from(
+          submitted ? ActionFeedback.pending(verb) : ActionFeedback.uncertain(verb));
+    }
+    final fb = classifyActionFailure(
+      applying: applying,
+      raw: raw,
+      quota: _quota(event),
+      deadline: _deadline(event),
+      kind: 'business',
+    );
+    return ActionResult.from(fb);
   }
 
   Future<ActionResult> apply(BuildContext context, CalEvent event) async {
     final id = _s(event.extra['activityID']);
-    if (id.isEmpty) return const ActionResult(false, '这条活动缺少编号，无法报名');
+    if (id.isEmpty) {
+      return ActionResult.from(
+          ActionFeedback.missing('这条活动缺少编号，无法报名'));
+    }
+
+    // 已知已报名：不发请求、不弹窗，直接给出分类提示并修正按钮状态
+    if (event.extra['registered'] == true) {
+      return _stateHint(true, true);
+    }
 
     final lines = _lines(event);
     var statusText = '状态查询失败（仍可尝试）';
     try {
       final reg = await api.call('activity_status', {'activityId': id});
       if (reg is Map && reg['registered'] == true) {
-        return const ActionResult(false, '你已经报名过这个活动了，不用重复报名');
+        return _stateHint(true, true);
       }
       statusText = '尚未报名';
     } catch (_) {
@@ -193,18 +261,22 @@ class ActivityActions {
 
     try {
       final d = await api.call('activity_apply', {'activityId': id});
-      return _explain(d, '报名');
-    } on HduError catch (e) {
-      return ActionResult(false, '报名未成功：${e.userMessage()}');
+      return _explain(d, true, event);
     } catch (e) {
-      return ActionResult(false, '报名未成功：$e');
+      return _failure(e, true, event);
     }
   }
 
   Future<ActionResult> cancel(BuildContext context, CalEvent event) async {
     final id = _s(event.extra['activityID']);
     if (id.isEmpty) {
-      return const ActionResult(false, '这条活动缺少编号，无法取消报名');
+      return ActionResult.from(
+          ActionFeedback.missing('这条活动缺少编号，无法取消报名'));
+    }
+
+    // 已知未报名：不发请求、不弹窗，直接给出分类提示
+    if (event.extra['registered'] == false) {
+      return _stateHint(false, false);
     }
 
     final lines = _lines(event);
@@ -240,11 +312,9 @@ class ActivityActions {
         'activityId': realId.isEmpty ? id : realId,
         'reason': '在课程日历中取消报名',
       });
-      return _explain(d, '取消报名');
-    } on HduError catch (e) {
-      return ActionResult(false, '取消未成功：${e.userMessage()}');
+      return _explain(d, false, event);
     } catch (e) {
-      return ActionResult(false, '取消未成功：$e');
+      return _failure(e, false, event);
     }
   }
 }

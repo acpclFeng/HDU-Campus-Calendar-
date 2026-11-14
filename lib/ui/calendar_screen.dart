@@ -5,6 +5,7 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import '../core/action_feedback.dart';
 import '../core/calendar_service.dart';
 import '../core/date_utils.dart';
 import '../core/hdu_api.dart';
@@ -52,6 +53,11 @@ class _CalendarScreenState extends State<CalendarScreen> {
   String? _error;
   int _requestId = 0; // 防止「翻页 / 切视图」时旧请求回来覆盖新结果
 
+  /// 精确报名状态：活动编号 -> 是否已报名。
+  /// 日历数据先用「我的二课」给出即时判定，再对选中当天逐条查 registration 接口核实。
+  final Map<String, bool> _registration = {};
+  final Set<String> _probed = {};
+
   @override
   void initState() {
     super.initState();
@@ -76,17 +82,21 @@ class _CalendarScreenState extends State<CalendarScreen> {
       if (week) {
         final r = await _service.week(_selected, includePublic: _includePublic);
         if (!mounted || myId != _requestId) return;
+        _decorate(r);
         setState(() => _weekData = r);
+        unawaited(_probeSelected(r, myId));
       } else {
         final start = gridStart(_year, _month);
         final end = addDays(start, 41);
         final r = await _service.range(start, end, includePublic: _includePublic);
         await _store.saveCache(r);
         if (!mounted || myId != _requestId) return;
+        _decorate(r);
         setState(() {
           _data = r;
           _offline = false;
         });
+        unawaited(_probeSelected(r, myId));
       }
     } on HduError catch (e) {
       if (!mounted || myId != _requestId) return;
@@ -97,6 +107,7 @@ class _CalendarScreenState extends State<CalendarScreen> {
       final cached = await _store.loadCache();
       if (cached != null && !week) {
         if (!mounted) return;
+        _decorate(cached);
         setState(() {
           _data = cached;
           _offline = true;
@@ -111,6 +122,7 @@ class _CalendarScreenState extends State<CalendarScreen> {
       if (!mounted || myId != _requestId) return;
       final cached = await _store.loadCache();
       if (cached != null && !week) {
+        _decorate(cached);
         setState(() {
           _data = cached;
           _offline = true;
@@ -176,17 +188,120 @@ class _CalendarScreenState extends State<CalendarScreen> {
   }
 
   Future<void> _refresh() async {
+    // 手动刷新时重新向学校核实报名状态，不再沿用上次探测结果
     _service.clearCache();
+    _service.clearRegistration();
+    _registration.clear();
+    _probed.clear();
     await _load(week: !_monthView);
     _snack('已刷新');
   }
 
-  // 二课报名 / 取消报名：写入成功后清缓存重载，让日历立刻反映新状态。
+  /// 把已核实的报名状态写回卡片数据。
+  /// CalEvent.extra 是普通可变 Map，就地写入即可，避免层层透传新参数。
+  void _decorate(CalendarResult? r) {
+    if (r == null) return;
+    for (final list in r.days.values) {
+      for (final e in list) {
+        if (e.type != 'activity') continue;
+        final id = (e.extra['activityID'] ?? '').toString();
+        final known = _registration[id];
+        if (known != null) e.extra['registered'] = known;
+      }
+    }
+  }
+
+  /// 只核实「当前选中那天」的二课，通常 1～5 条，不会一次发几十个请求。
+  /// 查到的状态同时写进 CalendarService 的本地修正表，重载日历后也不会被旧缓存覆盖。
+  Future<void> _probeSelected(CalendarResult r, int myId) async {
+    final ids = <String>{};
+    for (final e in r.days[_selected] ?? const <CalEvent>[]) {
+      if (e.type != 'activity') continue;
+      final id = (e.extra['activityID'] ?? '').toString();
+      if (id.isNotEmpty && !_probed.contains(id)) ids.add(id);
+    }
+    if (ids.isEmpty) return;
+    final results = await Future.wait(
+      ids.map<Future<MapEntry<String, bool>?>>((id) async {
+        try {
+          final d = await _service.api.call('activity_status', {'activityId': id});
+          return MapEntry(id, d is Map && d['registered'] == true);
+        } catch (_) {
+          return null; // 查不到就保留「我的二课」给出的即时判定
+        }
+      }),
+    );
+    if (!mounted) return;
+    var changed = false;
+    for (final pair in results) {
+      if (pair == null) continue;
+      _probed.add(pair.key);
+      _service.setRegistration(pair.key, pair.value);
+      if (_registration[pair.key] != pair.value) {
+        _registration[pair.key] = pair.value;
+        changed = true;
+      }
+    }
+    if (changed && myId == _requestId) {
+      _decorate(_data);
+      _decorate(_weekData);
+      setState(() {});
+    }
+  }
+
+  /// 反馈按原因分色：绿色=成功，橙色=明确业务原因（满/截止/已报名…），
+  /// 红色=学校服务异常或结果不确定，一眼就能分清「坏了」和「没报上」。
+  void _showFeedback(ActionResult result) {
+    Color bg;
+    switch (result.category) {
+      case ActionCategory.ok:
+        bg = const Color(0xFF1E7A4B);
+        break;
+      case ActionCategory.full:
+      case ActionCategory.closed:
+      case ActionCategory.already:
+      case ActionCategory.notRegistered:
+      case ActionCategory.ineligible:
+      case ActionCategory.conflict:
+      case ActionCategory.rate:
+        bg = const Color(0xFF9A5B00);
+        break;
+      case ActionCategory.service:
+      case ActionCategory.pending:
+      case ActionCategory.auth:
+        bg = const Color(0xFF8A3A3A);
+        break;
+      default:
+        bg = const Color(0xFF374151);
+    }
+    ScaffoldMessenger.of(context)
+      ..hideCurrentSnackBar()
+      ..showSnackBar(SnackBar(
+        content: Text(result.text),
+        backgroundColor: bg,
+        duration: Duration(seconds: result.ok ? 3 : 6),
+      ));
+  }
+
+  // 二课报名 / 取消报名：先按分类显示结果，再把按钮状态立刻改掉，最后清缓存重载。
   // 用 State.context 而不是卡片自己的 context：弹窗前有网络等待，State 的更稳。
-  Future<void> _handleAction(Future<ActionResult> pending) async {
+  Future<void> _handleAction(
+      Future<ActionResult> pending, CalEvent event, bool applying) async {
     final result = await pending;
     if (!mounted || result.text.isEmpty) return;
-    _snack(result.text);
+    _showFeedback(result);
+
+    final id = (event.extra['activityID'] ?? '').toString();
+    final hint = result.registrationHint;
+    if (id.isNotEmpty && (result.ok || hint != null)) {
+      final state = hint ?? applying;
+      _service.setRegistration(id, state);
+      _registration[id] = state;
+      _probed.add(id);
+      _decorate(_data);
+      _decorate(_weekData);
+      setState(() {}); // 不等网络重载，按钮先变灰/亮起来
+    }
     if (result.ok) {
       _service.clearCache();
       await _load(week: !_monthView);
@@ -195,12 +310,12 @@ class _CalendarScreenState extends State<CalendarScreen> {
 
   void _onApply(BuildContext _, CalEvent event) {
     if (!mounted) return;
-    unawaited(_handleAction(_actions.apply(context, event)));
+    unawaited(_handleAction(_actions.apply(context, event), event, true));
   }
 
   void _onCancel(BuildContext _, CalEvent event) {
     if (!mounted) return;
-    unawaited(_handleAction(_actions.cancel(context, event)));
+    unawaited(_handleAction(_actions.cancel(context, event), event, false));
   }
 
   void _openSettings() {
@@ -285,7 +400,7 @@ class _CalendarScreenState extends State<CalendarScreen> {
                         textAlign: TextAlign.center,
                         style: TextStyle(fontSize: 11, color: Color(0xFF7A8191))),
                     const SizedBox(height: 18),
-                    const Text('课程日历 · 本机版 v5',
+                    const Text('课程日历 · 本机版 v6',
                         textAlign: TextAlign.center,
                         style: TextStyle(fontSize: 11, letterSpacing: 1, color: Color(0xFF7A8191))),
                     const SizedBox(height: 24),
@@ -475,6 +590,7 @@ class _CalendarScreenState extends State<CalendarScreen> {
               // 灰色格是上/下月的日期：只选中并展示当天安排，绝不翻月。
               // _load() 用 range(gridStart, +41 天)，跨月那几天的数据本来就在。
               setState(() => _selected = isoOf(d));
+              unawaited(_probeSelected(data, _requestId));
             },
           ),
           DayDetail(

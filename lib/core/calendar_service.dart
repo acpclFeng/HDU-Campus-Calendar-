@@ -11,7 +11,18 @@ class CalendarService {
   final HduApi api;
   final Map<String, _Memo> _cache = {};
 
+  /// 报名/取消成功后立刻修正按钮状态，不用等学校「我的二课」接口缓存过期。
+  /// 键是活动编号，值就是当前应显示的报名状态。
+  final Map<String, bool> _registrationOverride = {};
+
   CalendarService(String token) : api = HduApi(token);
+
+  void setRegistration(String activityId, bool registered) {
+    final id = activityId.trim();
+    if (id.isNotEmpty) _registrationOverride[id] = registered;
+  }
+
+  void clearRegistration() => _registrationOverride.clear();
 
   Future<T> _memo<T>(String key, Duration ttl, Future<T> Function() factory) async {
     final hit = _cache[key];
@@ -114,7 +125,22 @@ class CalendarService {
     for (final item in publicList) {
       add(item);
     }
-    return list;
+
+    // 给每条二课标出「我是否已报名」，卡片据此把不该点的按钮置灰。
+    // 判定顺序：操作后的本地修正 > 记录自带字段 > 是否来自「我的二课」> 未报名。
+    final mineIds = <String>{};
+    for (final item in mine) {
+      final id = _activityIdOf(item);
+      if (id.isNotEmpty) mineIds.add(id);
+    }
+    return list.map((item) {
+      final out = Map<String, dynamic>.from(item);
+      final id = _activityIdOf(out);
+      final override = _registrationOverride[id];
+      final inferred = _inferRegistered(out);
+      out['registered'] = override ?? inferred ?? mineIds.contains(id);
+      return out;
+    }).toList();
   }
 
   /// 考试接口常因教务处未开放返回业务码，转成一条提示而不是让整个日历报错
@@ -216,10 +242,44 @@ class _ExamResult {
   const _ExamResult(this.items, this.notices);
 }
 
+String _activityIdOf(Map<String, dynamic> item) =>
+    (item['activityID'] ?? item['id'] ?? item['activityId'] ?? '')
+        .toString()
+        .trim();
+
+/// 公开活动/我的二课里可能自带报名标记，字段各版本不统一，能读到就采信
+bool? _inferRegistered(Map<String, dynamic> item) {
+  for (final key in [
+    'registered',
+    'isRegistered',
+    'isApplied',
+    'hasApplied',
+    'applied',
+    'joined',
+    'isSignUp',
+  ]) {
+    final v = item[key];
+    if (v is bool) return v;
+    if (v is num) return v != 0;
+    if (v is String) {
+      final s = v.toLowerCase().trim();
+      if (['1', 'true', 'yes', 'y', '已报名', '已参加'].contains(s)) return true;
+      if (['0', 'false', 'no', 'n', '未报名'].contains(s)) return false;
+    }
+  }
+  // 注意：activityStatus 是「活动状态」（8=报名中），不是「我的报名状态」，不能拿来判定
+  final status =
+      item['applyStatus'] ?? item['registrationStatus'] ?? item['signStatus'];
+  if (status != null) {
+    final s = status.toString().trim();
+    if (['1', '2', '已报名', '报名成功', '已参加', '已通过'].contains(s)) return true;
+    if (['0', '未报名', '未参加'].contains(s)) return false;
+  }
+  return null;
+}
+
 List<String> _activityKeys(Map<String, dynamic> item) {
-  final id = (item['activityID'] ?? item['id'] ?? item['activityId'] ?? '')
-      .toString()
-      .trim();
+  final id = _activityIdOf(item);
   final name = (item['activityName'] ?? item['name'] ?? '').toString().trim();
   final start =
       (item['activityStartTime'] ?? item['startTime'] ?? '').toString().trim();
@@ -435,6 +495,8 @@ Map<String, List<CalEvent>> activityEvents(List<Map<String, dynamic>> list) {
         'activityStatusName': (item['activityStatusName'] ?? '').toString(),
         'applyCount': item['applyCount'],
         'totalCount': item['totalCount'],
+        // 按钮禁用判定：开 = 我的二课 ∪ 全校，关 = 只看我的
+        'registered': item['registered'] == true,
       };
       if (totalDays > 1) extra['span'] = '第${offset + 1}/$totalDays天';
       days.putIfAbsent(day, () => <CalEvent>[]).add(CalEvent(

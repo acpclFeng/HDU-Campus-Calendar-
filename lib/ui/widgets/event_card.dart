@@ -120,31 +120,54 @@ class EventCard extends StatelessWidget {
   }
 
   // 用 Wrap 而不是 Row：窄屏放不下时自动换行，不会把「取消报名」挤出屏幕。
+  // 按报名状态禁用：已报名 → 「确认报名」灰掉且点不动；
+  // 未报名 → 「取消报名」灰掉且点不动；状态未知则两个都先留着（点下去会先查状态）。
   Widget _actionsRow(BuildContext context) {
     final id = (event.extra['activityID'] ?? '').toString();
-    final enabled = id.isNotEmpty && onApply != null && onCancel != null;
+    final hasId = id.isNotEmpty && onApply != null && onCancel != null;
+    final known = event.extra.containsKey('registered');
+    final registered = event.extra['registered'] == true;
+    final applyEnabled = hasId && (!known || !registered);
+    final cancelEnabled = hasId && (!known || registered);
+
+    final hint = !hasId
+        ? '缺少活动编号'
+        : !known
+            ? '报名状态未知 · 点按钮会先核对'
+            : registered
+                ? '已报名 · 可取消报名'
+                : '尚未报名 · 可确认报名';
+
+    final dark = Theme.of(context).brightness == Brightness.dark;
+    final disabledBg = dark ? const Color(0xFF2B2F39) : const Color(0xFFE8EBF1);
+    final disabledFg = dark ? const Color(0xFF6B7280) : const Color(0xFF98A0AF);
+    final disabledLine = dark ? const Color(0xFF333844) : const Color(0xFFD8DDE7);
+
     return Wrap(
       spacing: 8,
       runSpacing: 6,
       alignment: WrapAlignment.end,
       crossAxisAlignment: WrapCrossAlignment.center,
       children: [
-        Text(
-          enabled ? '点按钮可报名 / 取消报名' : '缺少活动编号',
-          style: TextStyle(fontSize: 11, color: Colors.grey.shade600),
-        ),
+        Text(hint, style: TextStyle(fontSize: 11, color: Colors.grey.shade600)),
         _actionButton(
           label: '确认报名',
           background: const Color(0xFF2F6FED),
           foreground: Colors.white,
-          onTap: enabled ? () => onApply!(context, event) : null,
+          disabledBg: disabledBg,
+          disabledFg: disabledFg,
+          disabledLine: disabledLine,
+          onTap: applyEnabled ? () => onApply!(context, event) : null,
         ),
         _actionButton(
           label: '取消报名',
           background: const Color(0xFFFFF1F1),
           foreground: const Color(0xFFC0393E),
+          disabledBg: disabledBg,
+          disabledFg: disabledFg,
+          disabledLine: disabledLine,
           border: true,
-          onTap: enabled ? () => onCancel!(context, event) : null,
+          onTap: cancelEnabled ? () => onCancel!(context, event) : null,
         ),
       ],
     );
@@ -154,27 +177,35 @@ class EventCard extends StatelessWidget {
     required String label,
     required Color background,
     required Color foreground,
+    required Color disabledBg,
+    required Color disabledFg,
+    required Color disabledLine,
     required VoidCallback? onTap,
     bool border = false,
   }) {
+    final disabled = onTap == null;
+    final box = Container(
+      height: 34,
+      padding: const EdgeInsets.symmetric(horizontal: 14),
+      alignment: Alignment.center,
+      decoration: BoxDecoration(
+        color: disabled ? disabledBg : background,
+        borderRadius: BorderRadius.circular(9),
+        border: border
+            ? Border.all(color: disabled ? disabledLine : const Color(0xFFF0C7C7))
+            : (disabled ? Border.all(color: disabledLine) : null),
+      ),
+      child: Text(label,
+          style: TextStyle(
+            fontSize: 13,
+            fontWeight: FontWeight.w600,
+            color: disabled ? disabledFg : foreground,
+          )),
+    );
+    // IgnorePointer 保证灰掉的按钮连点击区域都不响应
     return GestureDetector(
       onTap: onTap,
-      child: Container(
-        height: 34,
-        padding: const EdgeInsets.symmetric(horizontal: 14),
-        alignment: Alignment.center,
-        decoration: BoxDecoration(
-          color: onTap == null ? Colors.grey.shade300 : background,
-          borderRadius: BorderRadius.circular(9),
-          border: border ? Border.all(color: const Color(0xFFF0C7C7)) : null,
-        ),
-        child: Text(label,
-            style: TextStyle(
-              fontSize: 13,
-              fontWeight: FontWeight.w600,
-              color: onTap == null ? Colors.grey.shade600 : foreground,
-            )),
-      ),
+      child: disabled ? IgnorePointer(child: box) : box,
     );
   }
 
