@@ -46,8 +46,8 @@ class _CalendarScreenState extends State<CalendarScreen> {
   CalendarResult? _data;
   CalendarResult? _weekData;
   final Set<String> _filters = {'class', 'activity', 'exam'};
-  // 默认开：关掉就只看已报名的，连想报名的活动都看不到。
-  bool _includePublic = true;
+  // 默认关：打开先看我已报名的，想找新活动再手动打开「全部二课」。
+  bool _includePublic = false;
   bool _loading = false;
   bool _offline = false;
   String? _error;
@@ -400,7 +400,7 @@ class _CalendarScreenState extends State<CalendarScreen> {
                         textAlign: TextAlign.center,
                         style: TextStyle(fontSize: 11, color: Color(0xFF7A8191))),
                     const SizedBox(height: 18),
-                    const Text('课程日历 · 本机版 v6',
+                    const Text('课程日历 · 本机版 v7',
                         textAlign: TextAlign.center,
                         style: TextStyle(fontSize: 11, letterSpacing: 1, color: Color(0xFF7A8191))),
                     const SizedBox(height: 24),
