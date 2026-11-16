@@ -32,3 +32,10 @@ Actions → 左侧「编译课程日历 APK」→ **Run workflow** → 等新的
 
 Windows 下双击 `一键生成并打包.bat`；详细说明见 `setup.ps1` 与 `native-config/README.md`。
 iOS 版必须在 Mac + Xcode 上打包，Windows 做不到。
+
+## 获得杭电令牌方法
+
+打开网站http://neo.neo.hduhelp.com，登陆杭电助手，点击“我的”“应用与服务授权”，创建令牌，为功能完整，必须勾选上
+**“读取考试安排”“读取课表”“读取二课活动与公共目录”“报名或取消报名二课活动”**四个权限，点击创建令牌，复制并保存令牌
+
+
